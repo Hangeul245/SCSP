@@ -3,11 +3,16 @@ VScode extension for Source code security
 
 
 ## 최초 설정방법
-1. node.js를 설치 (npm 명령어 수행을 위함)
+1. `node.js`를 설치  
+(node-v24.15.0-x64)
 2. 원하는 경로로 가서 git clone 등 수행(git 연결)
 3. SCSP 폴더 경로로 이동후필요한 라이브러리 설치  
     ``` 
     npm install
+    ```
+4. 프로젝트 빌드(필수) : SCSP 폴더로 이동 후 명령어 수행
+    ```
+    npm run compile
     ```
 ## 실행방법
 1. VSCODE로 SCSP 폴더 오픈
