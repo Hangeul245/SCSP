@@ -1,7 +1,28 @@
 # scsp README
+VScode extension for Source code security
 
-This is the README for your extension "scsp". After writing up a brief description, we recommend including the following sections.
 
+## 최초 설정방법
+1. node.js를 설치 (npm 명령어 수행을 위함)
+2. 원하는 경로로 가서 git clone 등 수행(git 연결)
+3. SCSP 폴더 경로로 이동후필요한 라이브러리 설치  
+    ``` 
+    npm install
+    ```
+## 실행방법
+1. VSCODE로 SCSP 폴더 오픈
+2. `F5`를 눌러 디버깅
+  -> 새로운 vscode창 뜸
+3. `CTRL+Shift+P` 눌러 명령 팔레트 열기
+4. `Hello World`명령어 입력 후 화면 우측 하단에 메시지 출력되는지 확인
+
+
+
+
+
+
+
+-------------------
 ## Features
 
 Describe specific features of your extension including screenshots of your extension in action. Image paths are relative to this README file.
