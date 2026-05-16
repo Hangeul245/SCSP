@@ -28,15 +28,16 @@ function memberToStr(n: TSESTree.MemberExpression): string {
 }
 
 export class TaintEngine {
-  // ⚠️ 파일 전체를 단일 스코프로 처리 — 동명 변수 섀도잉 미지원
   private tainted = new Map<string, TaintedVar>();
   private flows: TaintFlow[] = [];
 
+  /**
+   * 파일 전체를 분석합니다.
+   */
   analyze(code: string, language: 'js' | 'ts' | 'py'): TaintFlow[] {
     this.tainted.clear();
     this.flows = [];
-
-    if (language === 'py') return []; // Python 파서 미구현
+    if (language === 'py') return [];
 
     let ast: TSESTree.Program;
     try {
@@ -51,7 +52,59 @@ export class TaintEngine {
     return this.flows;
   }
 
-  // ─── 순회 ──────────────────────────────────────────────────────────────
+  /**
+   * 변경된 라인 범위를 포함하는 함수/블록만 골라 재분석합니다.
+   *
+   * @param code        전체 파일 텍스트 (변경 적용 후)
+   * @param language    언어 종류
+   * @param changedLines 변경이 발생한 1-based 라인 번호 집합
+   * @returns 변경 범위에서 새로 발견된 TaintFlow 배열
+   */
+  analyzeRange(
+    code: string,
+    language: 'js' | 'ts' | 'py',
+    changedLines: Set<number>,
+  ): TaintFlow[] {
+    if (language === 'py') return [];
+
+    let ast: TSESTree.Program;
+    try {
+      ast = parse(code, { jsx: true, loc: true, range: true, tolerant: true });
+    } catch {
+      return [];
+    }
+
+    // 변경 라인을 포함하는 최상위 노드만 추려냄
+    const affectedStmts = ast.body.filter(stmt => {
+      const start = stmt.loc?.start.line ?? 0;
+      const end   = stmt.loc?.end.line   ?? 0;
+      for (const line of changedLines) {
+        if (line >= start && line <= end) return true;
+      }
+      return false;
+    });
+
+    // 영향받는 노드만 분석 (tainted 맵은 전체 파일 기준으로 먼저 채워야
+    // 정확하지만, 증분 모드에서는 일단 독립 실행으로 근사치를 얻음)
+    this.tainted.clear();
+    this.flows = [];
+
+    // tainted 전파 문맥을 위해 변경 노드보다 앞에 있는 선언들은 먼저 처리
+    for (const stmt of ast.body) {
+      const end = stmt.loc?.end.line ?? 0;
+      const minChangedLine = Math.min(...changedLines);
+      if (end < minChangedLine) {
+        this.visitStatement(stmt as TSESTree.Statement);
+      }
+    }
+
+    // 실제 변경 범위 분석
+    for (const stmt of affectedStmts) {
+      this.visitStatement(stmt as TSESTree.Statement);
+    }
+
+    return this.flows;
+  }
 
   private visitStatement(node: TSESTree.Statement) {
     switch (node.type) {
@@ -65,7 +118,6 @@ export class TaintEngine {
         node.body.forEach(s => this.visitStatement(s));
         break;
       case 'IfStatement':
-        // ⚠️ 분기 병합 미구현 — 양쪽 단순 방문
         this.visitStatement(node.consequent);
         if (node.alternate) this.visitStatement(node.alternate);
         break;
@@ -95,10 +147,6 @@ export class TaintEngine {
     if (isCallExpr(node)) {
       this.checkSinks(node);
 
-      // ─── 핵심 추가: Arrow/Function 콜백 내부 재귀 방문 ───────────────
-      // app.get('/path', (req, res) => { ... }) 패턴 처리
-      // ⚠️ 콜백 파라미터(req, res)를 현재 스코프 tainted map과 공유하므로
-      //    동명 변수 충돌 가능성 있음 — 중첩 라우터 등에서 주의
       for (const arg of node.arguments) {
         if (
           arg.type === 'ArrowFunctionExpression' ||
@@ -107,7 +155,6 @@ export class TaintEngine {
           if (arg.body.type === 'BlockStatement') {
             arg.body.body.forEach(s => this.visitStatement(s));
           } else {
-            // Arrow function 단일 표현식: (req, res) => db.query(...)
             this.visitExpression(arg.body as TSESTree.Expression);
           }
         }
@@ -124,10 +171,7 @@ export class TaintEngine {
     this.handleAssignment(node.id.name, node.init, lineOf(node));
   }
 
-  // ─── 오염 마킹 ─────────────────────────────────────────────────────────
-
   private handleAssignment(varName: string, init: TSESTree.Expression, line: number) {
-    // 1. 직접 source?
     const sourceDesc = this.matchSource(init);
     if (sourceDesc) {
       this.tainted.set(varName, {
@@ -137,7 +181,6 @@ export class TaintEngine {
       return;
     }
 
-    // 2. sanitizer 결과?
     if (isCallExpr(init)) {
       const san = this.matchSanitizer(init);
       if (san) {
@@ -155,7 +198,6 @@ export class TaintEngine {
       }
     }
 
-    // 3. 오염 전파 (문자열 연결, 템플릿 리터럴 등)
     const propagated = this.findTaintedInExpr(init);
     if (propagated) {
       this.tainted.set(varName, {
@@ -168,18 +210,14 @@ export class TaintEngine {
     }
   }
 
-  // ─── Source 매칭 ───────────────────────────────────────────────────────
-
   private matchSource(node: TSESTree.Expression): string | null {
     for (const p of SOURCE_PATTERNS) {
       if (p.type === 'member' && isMemberExpr(node)) {
-        // req.query
         if (
           isIdentifier(node.object)   && node.object.name   === p.object &&
           isIdentifier(node.property) && node.property.name === p.property
         ) return memberToStr(node);
 
-        // req.query.id (depth 2)
         if (
           isMemberExpr(node.object) &&
           isIdentifier(node.object.object)   && node.object.object.name   === p.object &&
@@ -193,14 +231,11 @@ export class TaintEngine {
     return null;
   }
 
-  // ─── Sanitizer 매칭 ────────────────────────────────────────────────────
-
   private matchSanitizer(node: TSESTree.CallExpression): { name: string; categories: SinkCategory[] } | null {
     for (const p of SANITIZER_PATTERNS) {
       if (p.type === 'call' && p.callee) {
         if (isIdentifier(node.callee) && node.callee.name === p.callee)
           return { name: p.callee, categories: p.categories };
-        // "he.encode" 같은 dotted 형태
         if (isMemberExpr(node.callee)) {
           const full = [
             isIdentifier(node.callee.object)   ? node.callee.object.name   : '',
@@ -218,8 +253,6 @@ export class TaintEngine {
     }
     return null;
   }
-
-  // ─── 오염 탐색 ─────────────────────────────────────────────────────────
 
   private findTaintedInExpr(node: TSESTree.Expression): TaintedVar | null {
     if (isIdentifier(node) && this.tainted.has(node.name))
@@ -252,8 +285,6 @@ export class TaintEngine {
     return null;
   }
 
-  // ─── Sink 검사 ─────────────────────────────────────────────────────────
-
   private checkSinks(node: TSESTree.Expression) {
     if (!isCallExpr(node)) return;
 
@@ -277,17 +308,17 @@ export class TaintEngine {
         taintedVar.sanitized &&
         !taintedVar.validForCategories.includes(sink.category);
 
-      if (taintedVar.sanitized && !sanitizerWrong) continue; // 안전
+      if (taintedVar.sanitized && !sanitizerWrong) continue;
 
       this.flows.push({
-        vulnType:       sink.category,
-        sourceLine:     taintedVar.sourceLine,
-        sourceDesc:     taintedVar.sourceDesc,
-        sinkLine:       lineOf(node),
-        sinkDesc:       sink.description,
-        sinkArgSource:  taintedVar.name,
-        sanitized:      taintedVar.sanitized,
-        sanitizerName:  taintedVar.sanitizerName,
+        vulnType:      sink.category,
+        sourceLine:    taintedVar.sourceLine,
+        sourceDesc:    taintedVar.sourceDesc,
+        sinkLine:      lineOf(node),
+        sinkDesc:      sink.description,
+        sinkArgSource: taintedVar.name,
+        sanitized:     taintedVar.sanitized,
+        sanitizerName: taintedVar.sanitizerName,
         sanitizerWrong,
         message: sanitizerWrong
           ? `[TaintGuard] ${sink.description} — '${taintedVar.sanitizerName}'은 이 sink에 적합한 sanitizer가 아닙니다.`
