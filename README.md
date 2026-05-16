@@ -26,7 +26,7 @@ JavaScript / TypeScript / Python
 ## 설치 및 실행
 
 ```bash
-git clone https://github.com/<유저명>/scsp.git
+git clone https://github.com/Hangeul245/scsp.git
 cd scsp
 npm install
 npm run compile
