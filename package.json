@@ -1,40 +1,60 @@
 {
   "name": "scsp",
-  "displayName": "SCSP",
-  "description": "",
-  "version": "0.0.1",
+  "displayName": "SCSP - Web Vulnerability Detector",
+  "description": "Taint analysis 기반 웹 취약점 실시간 탐지",
+  "version": "0.1.0",
   "engines": {
-    "vscode": "^1.118.0"
+    "vscode": "^1.85.0"
   },
   "categories": [
-    "Other"
+    "Linters"
   ],
-  "activationEvents": [],
+  "activationEvents": [
+    "onLanguage:javascript",
+    "onLanguage:typescript",
+    "onLanguage:javascriptreact",
+    "onLanguage:typescriptreact"
+  ],
   "main": "./out/extension.js",
   "contributes": {
-    "commands": [
-      {
-        "command": "scsp.helloWorld",
-        "title": "Hello World"
+    "configuration": {
+      "title": "TaintGuard",
+      "properties": {
+        "taintGuard.enabledRules": {
+          "type": "array",
+          "default": [
+            "sqli",
+            "xss",
+            "cmdi",
+            "path",
+            "ssrf",
+            "redirect"
+          ],
+          "description": "활성화할 취약점 탐지 규칙"
+        },
+        "taintGuard.severity": {
+          "type": "string",
+          "enum": [
+            "error",
+            "warning",
+            "information"
+          ],
+          "default": "warning"
+        }
       }
-    ]
+    }
   },
   "scripts": {
-    "vscode:prepublish": "npm run compile",
     "compile": "tsc -p ./",
-    "watch": "tsc -watch -p ./",
-    "pretest": "npm run compile && npm run lint",
-    "lint": "eslint src",
-    "test": "vscode-test"
+    "watch": "tsc -watch -p ./"
+  },
+  "dependencies": {
+    "@typescript-eslint/typescript-estree": "^7.0.0",
+    "express": "^5.2.1"
   },
   "devDependencies": {
-    "@types/vscode": "^1.118.0",
-    "@types/mocha": "^10.0.10",
-    "@types/node": "22.x",
-    "typescript-eslint": "^8.56.1",
-    "eslint": "^9.39.3",
-    "typescript": "^5.9.3",
-    "@vscode/test-cli": "^0.0.12",
-    "@vscode/test-electron": "^2.5.2"
+    "@types/node": "^20.0.0",
+    "@types/vscode": "^1.85.0",
+    "typescript": "^5.3.0"
   }
 }
