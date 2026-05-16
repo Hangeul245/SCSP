@@ -1,97 +1,65 @@
-# scsp README
-VScode extension for Source code security
+# SCSP - Source Code Security Parser
 
-
-## 최초 설정방법
-1. `node.js`를 설치  
-(node-v24.15.0-x64)
-2. 원하는 경로로 가서 git clone 등 수행(git 연결)
-3. SCSP 폴더 경로로 이동후필요한 라이브러리 설치  
-    ``` 
-    npm install
-    ```
-4. 프로젝트 빌드(필수) : SCSP 폴더로 이동 후 명령어 수행
-    ```
-    npm run compile
-    ```
-## 실행방법
-1. VSCODE로 SCSP 폴더 오픈
-2. `F5`를 눌러 디버깅
-  -> 새로운 vscode창 뜸
-3. `CTRL+Shift+P` 눌러 명령 팔레트 열기
-4. `Hello World`명령어 입력 후 화면 우측 하단에 메시지 출력되는지 확인
-
-
-
-
-
-
-
--------------------
-## Features
-
-Describe specific features of your extension including screenshots of your extension in action. Image paths are relative to this README file.
-
-For example if there is an image subfolder under your extension project workspace:
-
-\!\[feature X\]\(images/feature-x.png\)
-
-> Tip: Many popular extensions utilize animations. This is an excellent way to show off your extension! We recommend short, focused animations that are easy to follow.
-
-## Requirements
-
-If you have any requirements or dependencies, add a section describing those and how to install and configure them.
-
-## Extension Settings
-
-Include if your extension adds any VS Code settings through the `contributes.configuration` extension point.
-
-For example:
-
-This extension contributes the following settings:
-
-* `myExtension.enable`: Enable/disable this extension.
-* `myExtension.thing`: Set to `blah` to do something.
-
-## Known Issues
-
-Calling out known issues can help limit users opening duplicate issues against your extension.
-
-## Release Notes
-
-Users appreciate release notes as you update your extension.
-
-### 1.0.0
-
-Initial release of ...
-
-### 1.0.1
-
-Fixed issue #.
-
-### 1.1.0
-
-Added features X, Y, and Z.
+Taint Analysis 기반 웹 취약점 실시간 탐지 VSCode Extension.  
+코드 수정 시 자동 분석 후 Problems 패널에 결과를 표시합니다.
 
 ---
 
-## Following extension guidelines
+## 탐지 취약점
 
-Ensure that you've read through the extensions guidelines and follow the best practices for creating your extension.
+| 코드 | 취약점 |
+|------|--------|
+| `sqli` | SQL Injection |
+| `xss` | Cross-Site Scripting |
+| `cmdi` | Command Injection |
+| `path` | Path Traversal |
+| `ssrf` | Server-Side Request Forgery |
+| `redirect` | Open Redirect |
 
-* [Extension Guidelines](https://code.visualstudio.com/api/references/extension-guidelines)
+---
 
-## Working with Markdown
+## 지원 언어
+JavaScript / TypeScript / Python
 
-You can author your README using Visual Studio Code. Here are some useful editor keyboard shortcuts:
+---
 
-* Split the editor (`Cmd+\` on macOS or `Ctrl+\` on Windows and Linux).
-* Toggle preview (`Shift+Cmd+V` on macOS or `Shift+Ctrl+V` on Windows and Linux).
-* Press `Ctrl+Space` (Windows, Linux, macOS) to see a list of Markdown snippets.
+## 설치 및 실행
 
-## For more information
+```bash
+git clone https://github.com/<유저명>/scsp.git
+cd scsp
+npm install
+npm run compile
+```
+VSCode에서 `F5` → Extension Development Host 실행
 
-* [Visual Studio Code's Markdown Support](http://code.visualstudio.com/docs/languages/markdown)
-* [Markdown Syntax Reference](https://help.github.com/articles/markdown-basics/)
+---
 
-**Enjoy!**
+## 사용 방법
+
+1. JS/TS/Python 파일 열기
+2. 코드 수정 후 600ms 뒤 자동 분석
+3. `Ctrl+Shift+M` Problems 패널에서 결과 확인
+4. 경고 클릭 시 오염 source 위치로 이동
+
+---
+
+## 설정
+
+```json
+{
+  "taintGuard.enabledRules": ["sqli", "xss", "cmdi", "path", "ssrf", "redirect"],
+  "taintGuard.severity": "warning"
+}
+```
+
+---
+
+## 알려진 한계
+
+- 함수 간 흐름(Interprocedural) 미추적
+- async/await, Promise 체인 내 전파 불완전
+- `req[key]` 같은 동적 속성 접근 미탐지
+- 등록되지 않은 커스텀 Sanitizer 미인식
+
+> 보조 도구로 활용하고 중요한 코드는 수동 검토를 병행하세요.
