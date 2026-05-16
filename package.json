@@ -50,7 +50,8 @@
   },
   "dependencies": {
     "@typescript-eslint/typescript-estree": "^7.0.0",
-    "express": "^5.2.1"
+    "express": "^5.2.1",
+    "python-ast": "^0.1.0"
   },
   "devDependencies": {
     "@types/node": "^20.0.0",
