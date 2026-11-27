@@ -300,9 +300,9 @@ const CASES: Case[] = [
 ];
 
 for (const c of CASES) {
-  test(c.id, () => {
+  test(c.id, async () => {
     const engine = new PythonTaintEngine();
-    const flows = engine.analyze(HEADER + c.body.join('\n'));
+    const flows = await engine.analyze(HEADER + c.body.join('\n'));
     assert.equal(engine.lastError, null);
     if (c.expect === null) {
       assert.equal(flows.length, 0);

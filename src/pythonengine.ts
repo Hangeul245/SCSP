@@ -7,12 +7,12 @@ export class PythonTaintEngine {
 
     lastError: { reason: string; line?: number } | null = null;
 
-  analyze(code: string): TaintFlow[] {
+  async analyze(code: string): Promise<TaintFlow[]> {
     this.tainted.clear();
     this.flows = [];
     this.lastError = null;
 
-    const parsed = parsePython(code);
+    const parsed = await parsePython(code);
     if (!parsed.ok) {
       this.lastError = { reason: parsed.reason, line: parsed.line };
       return [];

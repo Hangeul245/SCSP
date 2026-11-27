@@ -72,7 +72,7 @@ function scheduleFullAnalysis(doc: vscode.TextDocument) {
   }, DEBOUNCE_MS));
 }
 
-function runFullAnalysis(doc: vscode.TextDocument) {
+async function runFullAnalysis(doc: vscode.TextDocument) {
   const uri  = doc.uri.toString();
   const file = doc.uri.fsPath.split(/[\\/]/).pop();
 
@@ -97,7 +97,12 @@ function runFullAnalysis(doc: vscode.TextDocument) {
     outputChannel.appendLine(`🌐 언어: ${lang}`);
 
     if (lang === 'py') {
-      flows = new PythonTaintEngine().analyze(doc.getText());
+      const version = doc.version;
+      flows = await new PythonTaintEngine().analyze(doc.getText());
+      if (doc.isClosed || doc.version !== version) {
+        outputChannel.appendLine(`⏭️  분석 중에 문서가 바뀜 — 이전 결과 버림`);
+        return;
+      }
     } else {
       const engine = new TaintEngine();
       engineCache.set(uri, engine);
