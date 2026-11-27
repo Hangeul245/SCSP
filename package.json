@@ -34,6 +34,15 @@
           ],
           "description": "활성화할 취약점 탐지 규칙"
         },
+        "taintGuard.sourceProfiles": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": ["web", "cli", "file", "network", "llm"]
+          },
+          "default": ["web"],
+          "description": "Python에서 오염 출처로 볼 입력 종류 (web: 웹 요청, cli: 명령줄 인자, file: 파일 내용, network: HTTP 응답, llm: LLM 응답)"
+        },
         "taintGuard.severity": {
           "type": "string",
           "enum": [
