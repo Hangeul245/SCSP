@@ -83,6 +83,24 @@ npm test
 
 ## 설정
 
+설정은 VS Code `settings.json`에 넣습니다. 넣는 곳은 두 군데 중 하나입니다.
+
+| 위치 | 적용 범위 | 여는 방법 |
+|------|-----------|-----------|
+| 사용자 설정 | 내 VS Code 전체 | `Ctrl+Shift+P` → `Preferences: Open User Settings (JSON)` |
+| 작업 영역 설정 | 지금 연 폴더만 | 폴더 안에 `.vscode/settings.json` 파일을 만들기 |
+
+웹 서비스가 아닌 프로젝트(명령줄 도구, 자동화 스크립트, LLM 앱)에서만 프로필을 넓히고 싶다면 작업 영역 설정에 넣는 걸 권장합니다.
+JSON 대신 `Ctrl+,`로 설정 화면을 열고 `taintGuard`를 검색해도 됩니다.
+
+| 키 | 값 | 기본값 | 설명 |
+|----|----|--------|------|
+| `taintGuard.enabledRules` | `sqli`, `xss`, `cmdi`, `path`, `ssrf`, `redirect` 중 원하는 것 | 6개 전부 | 켤 취약점 종류. 목록에서 빼면 그 종류는 경고하지 않음 |
+| `taintGuard.severity` | `error`, `warning`, `information` | `error` | 정화되지 않은 입력의 표시 수준. 잘못된 sanitizer는 이 값과 상관없이 항상 `warning` |
+| `taintGuard.sourceProfiles` | `web`, `cli`, `file`, `network`, `llm` 중 원하는 것 | `web` | 오염으로 볼 입력 종류. `web` 외에는 Python만 지원 ([출처 프로필](#출처-프로필) 참고) |
+
+예시 1) 웹 서비스 (기본값과 같음, 안 넣어도 됨)
+
 ```json
 {
   "taintGuard.enabledRules": ["sqli", "xss", "cmdi", "path", "ssrf", "redirect"],
@@ -90,6 +108,16 @@ npm test
   "taintGuard.sourceProfiles": ["web"]
 }
 ```
+
+예시 2) 명령줄 도구나 LLM 앱 (`.vscode/settings.json`)
+
+```json
+{
+  "taintGuard.sourceProfiles": ["web", "cli", "file", "network", "llm"]
+}
+```
+
+설정을 바꾼 뒤에는 파일을 한 번 수정하거나 다른 파일로 갔다가 돌아오면 다시 분석합니다.
 
 ---
 
