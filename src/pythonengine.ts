@@ -59,28 +59,30 @@ export class PythonTaintEngine {
         this.visitBody(node.finalbody);
         break;
       case 'Return':
-        if (node.value) this.checkSinks(node.value);
+        if (node.value) this.visitExpr(node.value);
         break;
       case 'With':
       case 'AsyncWith':
-        for (const item of (node.items ?? [])) this.checkSinks(item.context_expr);
+        for (const item of (node.items ?? [])) this.visitExpr(item.context_expr);
         this.visitBody(node.body);
         break;
     }
   }
 
   private visitExpr(node: any) {
-    if (!node) return;
-    if (node._type === 'Call') {
-      this.checkSinks(node);
-      for (const arg of (node.args ?? [])) {
-        if (arg._type === 'Lambda') this.visitExpr(arg.body);
-      }
+    if (!node || typeof node !== 'object') return;
+    if (Array.isArray(node)) {
+      for (const child of node) this.visitExpr(child);
+      return;
+    }
+    if (node._type === 'Call') this.checkSinks(node);
+    for (const [key, child] of Object.entries(node)) {
+      if (key !== '_type') this.visitExpr(child);
     }
   }
 
   private handleAssign(node: any) {
-    this.checkSinks(node.value);
+    this.visitExpr(node.value);
     for (const target of (node.targets ?? [])) {
       const varName = this.extractName(target);
       if (varName) this.processAssignment(varName, node.value, node.lineno);
@@ -88,7 +90,7 @@ export class PythonTaintEngine {
   }
 
   private handleAnnAssign(node: any) {
-    this.checkSinks(node.value);
+    this.visitExpr(node.value);
     const varName = this.extractName(node.target);
     if (varName) this.processAssignment(varName, node.value, node.lineno);
   }
@@ -134,32 +136,37 @@ export class PythonTaintEngine {
     }
   }
 
+  private isRequestObject(name: string): boolean {
+    return [
+      'request.args', 'request.form', 'request.GET', 'request.POST',
+      'request.json', 'request.values', 'request.cookies',
+    ].some(o => name.startsWith(o));
+  }
+
   private matchSource(node: any): string | null {
+    if (!node) return null;
+
+    if (node._type === 'Subscript') {
+      const objName = this.extractAttrChain(node.value);
+      if (!this.isRequestObject(objName)) return null;
+      const s = node.slice?._type === 'Index' ? node.slice.value : node.slice;
+      const key = s?._type === 'Constant' && typeof s.value === 'string' ? s.value : '?';
+      return `${objName}['${key}']`;
+    }
+
     if (node._type !== 'Call') return null;
     const func = node.func;
 
     if (
       func._type === 'Attribute' && func.attr === 'get' &&
-      func.value?._type === 'Attribute'
+      func.value?._type === 'Attribute' &&
+      this.isRequestObject(this.extractAttrChain(func.value))
     ) {
-      const objName = this.extractAttrChain(func.value);
-      if (
-        objName.startsWith('request.args')   ||
-        objName.startsWith('request.form')   ||
-        objName.startsWith('request.GET')    ||
-        objName.startsWith('request.POST')   ||
-        objName.startsWith('request.json')   ||
-        objName.startsWith('request.values') ||
-        objName.startsWith('request.cookies')
-      ) {
-        const key = this.strArg(node, 0);
-        return `${objName}.get('${key}')`;
-      }
+      return `${this.extractAttrChain(func.value)}.get('${this.strArg(node, 0)}')`;
     }
 
     if (func._type === 'Attribute' && func.attr === 'get_argument') {
-      const key = this.strArg(node, 0);
-      return `get_argument('${key}')`;
+      return `get_argument('${this.strArg(node, 0)}')`;
     }
 
     return null;
@@ -252,6 +259,13 @@ export class PythonTaintEngine {
 
   private findTaintedInExpr(node: any): TaintedVar | null {
     if (!node) return null;
+    const direct = this.matchSource(node);
+    if (direct) {
+      return {
+        name: direct, sourceDesc: direct, sourceLine: node.lineno ?? 0,
+        sanitized: false, validForCategories: [],
+      };
+    }
     if (node._type === 'Name' && this.tainted.has(node.id))
       return this.tainted.get(node.id)!;
     if (node._type === 'JoinedStr') {

@@ -50,3 +50,26 @@ test('with 문 머리의 open', () => {
     '        pass',
   ]), ['path']);
 });
+
+test('대괄호 출처', () => {
+  assert.deepEqual(kinds([
+    'def f():',
+    `    name = request.args['f']`,
+    '    os.system(name)',
+  ]), ['cmdi']);
+});
+
+test('출처가 sink 인자로 바로 들어감', () => {
+  assert.deepEqual(kinds([
+    'def f():',
+    `    os.system(request.args.get('c'))`,
+  ]), ['cmdi']);
+});
+
+test('중첩 호출 안쪽의 sink', () => {
+  assert.deepEqual(kinds([
+    'def f():',
+    `    name = request.args.get('f')`,
+    '    return open(name).read()',
+  ]), ['path']);
+});
