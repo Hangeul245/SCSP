@@ -43,6 +43,12 @@ VSCode에서 `F5` → Extension Development Host 실행
 ---
 
 ## 사용 방법
+
+1. JS/TS/Python 파일 열기
+2. 코드 수정 후 600ms 뒤 자동 분석
+3. `Ctrl+Shift+M` Problems 패널에서 결과 확인
+4. 경고 클릭 시 오염 source 위치로 이동
+
 ---
 
 ## 테스트
@@ -50,12 +56,6 @@ VSCode에서 `F5` → Extension Development Host 실행
 ```bash
 npm test
 ```
-
-1. JS/TS/Python 파일 열기
-2. 코드 수정 후 600ms 뒤 자동 분석
-3. `Ctrl+Shift+M` Problems 패널에서 결과 확인
-4. 경고 클릭 시 오염 source 위치로 이동
-
 ---
 
 ## 설정
