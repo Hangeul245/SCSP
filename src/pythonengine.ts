@@ -32,6 +32,7 @@ export class PythonTaintEngine {
     switch (node._type) {
       case 'FunctionDef':
       case 'AsyncFunctionDef':
+      case 'ClassDef':
         this.visitBody(node.body);
         break;
       case 'Assign':
@@ -44,21 +45,25 @@ export class PythonTaintEngine {
         this.visitExpr(node.value);
         break;
       case 'If':
+      case 'For':
+      case 'AsyncFor':
+      case 'While':
         this.visitBody(node.body);
         this.visitBody(node.orelse);
         break;
-      case 'For':
-      case 'While':
-        this.visitBody(node.body);
-        break;
       case 'Try':
+      case 'TryStar':
         this.visitBody(node.body);
+        for (const h of (node.handlers ?? [])) this.visitBody(h.body);
+        this.visitBody(node.orelse);
         this.visitBody(node.finalbody);
         break;
       case 'Return':
         if (node.value) this.checkSinks(node.value);
         break;
       case 'With':
+      case 'AsyncWith':
+        for (const item of (node.items ?? [])) this.checkSinks(item.context_expr);
         this.visitBody(node.body);
         break;
     }
