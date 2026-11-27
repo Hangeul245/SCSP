@@ -1,6 +1,6 @@
 import * as vscode from 'vscode';
 import { TaintEngine } from './taintEngine';
-import { PythonTaintEngine } from './pythonengine';
+import { PythonTaintEngine, SourceProfile } from './pythonengine';
 import { fixFor } from './fixes';
 import type { TaintFlow } from './types';
 
@@ -99,7 +99,9 @@ async function runFullAnalysis(doc: vscode.TextDocument) {
 
     if (lang === 'py') {
       const version = doc.version;
-      const pyEngine = new PythonTaintEngine();
+      const profiles = config.get<SourceProfile[]>('sourceProfiles') ?? ['web'];
+      const pyEngine = new PythonTaintEngine(profiles);
+      flows = await pyEngine.analyze(doc.getText());
       flows = await pyEngine.analyze(doc.getText());
       if (doc.isClosed || doc.version !== version) {
         outputChannel.appendLine(`⏭️  분석 중에 문서가 바뀜 — 이전 결과 버림`);

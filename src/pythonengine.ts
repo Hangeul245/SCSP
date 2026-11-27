@@ -1,11 +1,18 @@
 import { parsePython } from './pythonparser';
 import type { TaintedVar, TaintFlow, SinkCategory } from './types';
 
+export type SourceProfile = 'web' | 'cli' | 'file' | 'network' | 'llm';
+
 export class PythonTaintEngine {
   private tainted = new Map<string, TaintedVar>();
   private flows: TaintFlow[] = [];
+  private profiles: Set<SourceProfile>;
 
-    lastError: { reason: string; line?: number } | null = null;
+  constructor(profiles: SourceProfile[] = ['web']) {
+    this.profiles = new Set(profiles);
+  }
+
+  lastError: { reason: string; line?: number } | null = null;
 
   async analyze(code: string): Promise<TaintFlow[]> {
     this.tainted.clear();
@@ -145,13 +152,22 @@ export class PythonTaintEngine {
 
   private matchSource(node: any): string | null {
     if (!node) return null;
+    if (this.profiles.has('web')) {
+      const web = this.matchWebSource(node);
+      if (web) return web;
+    }
+    if (this.profiles.has('cli')) {
+      const cli = this.matchCliSource(node);
+      if (cli) return cli;
+    }
+    return null;
+  }
 
+  private matchWebSource(node: any): string | null {
     if (node._type === 'Subscript') {
       const objName = this.extractAttrChain(node.value);
       if (!this.isRequestObject(objName)) return null;
-      const s = node.slice?._type === 'Index' ? node.slice.value : node.slice;
-      const key = s?._type === 'Constant' && typeof s.value === 'string' ? s.value : '?';
-      return `${objName}['${key}']`;
+      return `${objName}['${this.subscriptKey(node)}']`;
     }
 
     if (node._type !== 'Call') return null;
@@ -170,6 +186,29 @@ export class PythonTaintEngine {
     }
 
     return null;
+  }
+
+  private matchCliSource(node: any): string | null {
+    if (node._type === 'Subscript' && this.extractAttrChain(node.value) === 'sys.argv') {
+      return 'sys.argv (명령줄 인자)';
+    }
+    if (node._type === 'Attribute' && this.extractAttrChain(node) === 'sys.argv') {
+      return 'sys.argv (명령줄 인자)';
+    }
+    if (node._type !== 'Call') return null;
+    const func = node.func;
+    if (func._type === 'Name' && func.id === 'input') {
+      return 'input() (사용자 입력)';
+    }
+    if (func._type === 'Attribute' && func.attr === 'parse_args') {
+      return 'parse_args() (명령줄 인자)';
+    }
+    return null;
+  }
+
+  private subscriptKey(node: any): string {
+    const s = node.slice?._type === 'Index' ? node.slice.value : node.slice;
+    return s?._type === 'Constant' && typeof s.value === 'string' ? s.value : '?';
   }
 
   private matchSanitizer(node: any): { name: string; categories: SinkCategory[] } | null {
@@ -254,8 +293,6 @@ export class PythonTaintEngine {
   private nameMatches(funcStr: string, pattern: string): boolean {
     return funcStr === pattern || funcStr.endsWith('.' + pattern);
   }
-  
-  
 
   private findTaintedInExpr(node: any): TaintedVar | null {
     if (!node) return null;
@@ -278,7 +315,13 @@ export class PythonTaintEngine {
       return this.findTaintedInExpr(node.value);
     if (node._type === 'BinOp')
       return this.findTaintedInExpr(node.left) ?? this.findTaintedInExpr(node.right);
+    if (node._type === 'Attribute' || node._type === 'Subscript')
+      return this.findTaintedInExpr(node.value);
     if (node._type === 'Call') {
+      if (node.func?._type === 'Attribute') {
+        const owner = this.findTaintedInExpr(node.func.value);
+        if (owner) return owner;
+      }
       for (const arg of (node.args ?? [])) {
         const found = this.findTaintedInExpr(arg);
         if (found) return found;
@@ -301,11 +344,13 @@ export class PythonTaintEngine {
       return this.tainted.get(arg.id)!;
     return this.findTaintedInExpr(arg);
   }
+
   private strArg(node: any, index: number): string {
     const arg = node.args?.[index];
     if (arg?._type === 'Constant' && typeof arg.value === 'string') return arg.value;
     return '?';
   }
+
   private extractName(node: any): string | null {
     if (node._type === 'Name') return node.id;
     return null;
