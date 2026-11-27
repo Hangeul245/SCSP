@@ -22,6 +22,13 @@ Taint Analysis 기반 웹 취약점 실시간 탐지 VSCode Extension.
 JavaScript / TypeScript / Python
 
 ---
+## 요구 사항
+
+- Node.js 18 이상
+- Python 파일 검사: Python 3.8 이상이 PATH에 있어야 함 (`python`, `python3`, `py` 순서로 찾음)
+  - 검사할 코드는 Python 내장 `ast`로 읽기만 하고 실행하지 않음
+
+---
 
 ## 설치 및 실행
 
@@ -36,6 +43,13 @@ VSCode에서 `F5` → Extension Development Host 실행
 ---
 
 ## 사용 방법
+---
+
+## 테스트
+
+```bash
+npm test
+```
 
 1. JS/TS/Python 파일 열기
 2. 코드 수정 후 600ms 뒤 자동 분석
@@ -49,7 +63,7 @@ VSCode에서 `F5` → Extension Development Host 실행
 ```json
 {
   "taintGuard.enabledRules": ["sqli", "xss", "cmdi", "path", "ssrf", "redirect"],
-  "taintGuard.severity": "warning"
+  "taintGuard.severity": "error"
 }
 ```
 
@@ -61,5 +75,5 @@ VSCode에서 `F5` → Extension Development Host 실행
 - async/await, Promise 체인 내 전파 불완전
 - `req[key]` 같은 동적 속성 접근 미탐지
 - 등록되지 않은 커스텀 Sanitizer 미인식
-
+- Python 파일에 문법 오류가 있으면 그 버전은 분석하지 않고 이전 결과를 유지
 > 보조 도구로 활용하고 중요한 코드는 수동 검토를 병행하세요.

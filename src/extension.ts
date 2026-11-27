@@ -1,6 +1,7 @@
 import * as vscode from 'vscode';
 import { TaintEngine } from './taintEngine';
 import { PythonTaintEngine } from './pythonengine';
+import { fixFor } from './fixes';
 import type { TaintFlow } from './types';
 
 const outputChannel = vscode.window.createOutputChannel('TaintGuard 분석 로그');
@@ -98,9 +99,14 @@ async function runFullAnalysis(doc: vscode.TextDocument) {
 
     if (lang === 'py') {
       const version = doc.version;
-      flows = await new PythonTaintEngine().analyze(doc.getText());
+      const pyEngine = new PythonTaintEngine();
+      flows = await pyEngine.analyze(doc.getText());
       if (doc.isClosed || doc.version !== version) {
         outputChannel.appendLine(`⏭️  분석 중에 문서가 바뀜 — 이전 결과 버림`);
+        return;
+      }
+      if (pyEngine.lastError) {
+        reportPythonError(doc, pyEngine.lastError);
         return;
       }
     } else {
@@ -226,9 +232,11 @@ function buildDiagnostic(
 
   const severity = flow.sanitizerWrong
     ? vscode.DiagnosticSeverity.Warning
-    : severityFrom(config.get<string>('severity') ?? 'warning');
+    : severityFrom(config.get<string>('severity') ?? 'error');
 
-  const diag    = new vscode.Diagnostic(range, flow.message, severity);
+  const fix     = fixFor(flow.vulnType, langOf(doc.languageId));
+  const text    = fix ? `${flow.message}\n수정 방안: ${fix}` : flow.message;
+  const diag    = new vscode.Diagnostic(range, text, severity);
   diag.source   = 'TaintGuard';
   diag.code     = flow.vulnType.toUpperCase();
 
@@ -246,6 +254,25 @@ function buildDiagnostic(
   return diag;
 }
 
+function reportPythonError(doc: vscode.TextDocument, err: { reason: string; line?: number }) {
+  const where = err.line ? ` (${err.line}번째 줄)` : '';
+  outputChannel.appendLine(`⚠️  Python 분석 못 함: ${err.reason}${where}`);
+
+  if (err.reason === 'SyntaxError') {
+    lastAnalyzedVersion.delete(doc.uri.toString());
+    vscode.window.setStatusBarMessage(`$(warning) TaintGuard: 문법 오류${where} — 이전 결과 유지`, 5000);
+    return;
+  }
+
+  const diag = new vscode.Diagnostic(
+    new vscode.Range(0, 0, 0, 0),
+    `[TaintGuard] 이 파일은 검사되지 않았습니다: ${err.reason}`,
+    vscode.DiagnosticSeverity.Warning,
+  );
+  diag.source = 'TaintGuard';
+  diagnosticsCache.set(doc.uri.toString(), [diag]);
+  diagnosticCollection.set(doc.uri, [diag]);
+}
 function showStatusBar(count: number) {
   if (count > 0) {
     vscode.window.setStatusBarMessage(`$(shield) TaintGuard: ${count}개 취약점 발견`, 5000);
