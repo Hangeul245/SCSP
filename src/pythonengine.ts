@@ -1,22 +1,24 @@
-import * as parser from 'python-ast';
+import { parsePython } from './pythonparser';
 import type { TaintedVar, TaintFlow, SinkCategory } from './types';
 
 export class PythonTaintEngine {
   private tainted = new Map<string, TaintedVar>();
   private flows: TaintFlow[] = [];
 
-  analyze(code: string): TaintFlow[] {
+    lastError: { reason: string; line?: number } | null = null;
+
+  async analyze(code: string): Promise<TaintFlow[]> {
     this.tainted.clear();
     this.flows = [];
+    this.lastError = null;
 
-    let ast: any;
-    try {
-      ast = parser.parse(code);
-    } catch {
+    const parsed = await parsePython(code);
+    if (!parsed.ok) {
+      this.lastError = { reason: parsed.reason, line: parsed.line };
       return [];
     }
 
-    this.visitBody(ast.body);
+    this.visitBody(parsed.ast.body);
     return this.flows;
   }
 
@@ -30,6 +32,7 @@ export class PythonTaintEngine {
     switch (node._type) {
       case 'FunctionDef':
       case 'AsyncFunctionDef':
+      case 'ClassDef':
         this.visitBody(node.body);
         break;
       case 'Assign':
@@ -42,37 +45,44 @@ export class PythonTaintEngine {
         this.visitExpr(node.value);
         break;
       case 'If':
+      case 'For':
+      case 'AsyncFor':
+      case 'While':
         this.visitBody(node.body);
         this.visitBody(node.orelse);
         break;
-      case 'For':
-      case 'While':
-        this.visitBody(node.body);
-        break;
       case 'Try':
+      case 'TryStar':
         this.visitBody(node.body);
+        for (const h of (node.handlers ?? [])) this.visitBody(h.body);
+        this.visitBody(node.orelse);
         this.visitBody(node.finalbody);
         break;
       case 'Return':
-        if (node.value) this.checkSinks(node.value);
+        if (node.value) this.visitExpr(node.value);
         break;
       case 'With':
+      case 'AsyncWith':
+        for (const item of (node.items ?? [])) this.visitExpr(item.context_expr);
         this.visitBody(node.body);
         break;
     }
   }
 
   private visitExpr(node: any) {
-    if (!node) return;
-    if (node._type === 'Call') {
-      this.checkSinks(node);
-      for (const arg of (node.args ?? [])) {
-        if (arg._type === 'Lambda') this.visitExpr(arg.body);
-      }
+    if (!node || typeof node !== 'object') return;
+    if (Array.isArray(node)) {
+      for (const child of node) this.visitExpr(child);
+      return;
+    }
+    if (node._type === 'Call') this.checkSinks(node);
+    for (const [key, child] of Object.entries(node)) {
+      if (key !== '_type') this.visitExpr(child);
     }
   }
 
   private handleAssign(node: any) {
+    this.visitExpr(node.value);
     for (const target of (node.targets ?? [])) {
       const varName = this.extractName(target);
       if (varName) this.processAssignment(varName, node.value, node.lineno);
@@ -80,6 +90,7 @@ export class PythonTaintEngine {
   }
 
   private handleAnnAssign(node: any) {
+    this.visitExpr(node.value);
     const varName = this.extractName(node.target);
     if (varName) this.processAssignment(varName, node.value, node.lineno);
   }
@@ -125,32 +136,37 @@ export class PythonTaintEngine {
     }
   }
 
+  private isRequestObject(name: string): boolean {
+    return [
+      'request.args', 'request.form', 'request.GET', 'request.POST',
+      'request.json', 'request.values', 'request.cookies',
+    ].some(o => name.startsWith(o));
+  }
+
   private matchSource(node: any): string | null {
+    if (!node) return null;
+
+    if (node._type === 'Subscript') {
+      const objName = this.extractAttrChain(node.value);
+      if (!this.isRequestObject(objName)) return null;
+      const s = node.slice?._type === 'Index' ? node.slice.value : node.slice;
+      const key = s?._type === 'Constant' && typeof s.value === 'string' ? s.value : '?';
+      return `${objName}['${key}']`;
+    }
+
     if (node._type !== 'Call') return null;
     const func = node.func;
 
     if (
       func._type === 'Attribute' && func.attr === 'get' &&
-      func.value?._type === 'Attribute'
+      func.value?._type === 'Attribute' &&
+      this.isRequestObject(this.extractAttrChain(func.value))
     ) {
-      const objName = this.extractAttrChain(func.value);
-      if (
-        objName.startsWith('request.args')   ||
-        objName.startsWith('request.form')   ||
-        objName.startsWith('request.GET')    ||
-        objName.startsWith('request.POST')   ||
-        objName.startsWith('request.json')   ||
-        objName.startsWith('request.values') ||
-        objName.startsWith('request.cookies')
-      ) {
-        const key = node.args?.[0]?._type === 'Str' ? node.args[0].s : '?';
-        return `${objName}.get('${key}')`;
-      }
+      return `${this.extractAttrChain(func.value)}.get('${this.strArg(node, 0)}')`;
     }
 
     if (func._type === 'Attribute' && func.attr === 'get_argument') {
-      const key = node.args?.[0]?._type === 'Str' ? node.args[0].s : '?';
-      return `get_argument('${key}')`;
+      return `get_argument('${this.strArg(node, 0)}')`;
     }
 
     return null;
@@ -206,36 +222,50 @@ export class PythonTaintEngine {
     ];
 
     for (const sink of sinks) {
-      if (!funcStr.endsWith(sink.pattern) && funcStr !== sink.pattern) continue;
+      if (!this.nameMatches(funcStr, sink.pattern)) continue;
 
       const taintedVar = this.findTaintedArgAtIndex(node, sink.argIndex);
-      if (!taintedVar) continue;
+      if (taintedVar) {
+        const sanitizerWrong =
+          taintedVar.sanitized &&
+          !taintedVar.validForCategories.includes(sink.category);
 
-      const sanitizerWrong =
-        taintedVar.sanitized &&
-        !taintedVar.validForCategories.includes(sink.category);
-
-      if (taintedVar.sanitized && !sanitizerWrong) continue;
-
-      this.flows.push({
-        vulnType:      sink.category,
-        sourceLine:    taintedVar.sourceLine,
-        sourceDesc:    taintedVar.sourceDesc,
-        sinkLine:      node.lineno ?? 0,
-        sinkDesc:      sink.description,
-        sinkArgSource: taintedVar.name,
-        sanitized:     taintedVar.sanitized,
-        sanitizerName: taintedVar.sanitizerName,
-        sanitizerWrong,
-        message: sanitizerWrong
-          ? `[TaintGuard] ${sink.description} — '${taintedVar.sanitizerName}'은 이 sink에 적합한 sanitizer가 아닙니다.`
-          : `[TaintGuard] ${sink.description} — '${taintedVar.name}'은 ${taintedVar.sourceDesc}에서 유래한 검증되지 않은 입력입니다.`,
-      });
+        if (!taintedVar.sanitized || sanitizerWrong) {
+          this.flows.push({
+            vulnType:      sink.category,
+            sourceLine:    taintedVar.sourceLine,
+            sourceDesc:    taintedVar.sourceDesc,
+            sinkLine:      node.lineno ?? 0,
+            sinkDesc:      sink.description,
+            sinkArgSource: taintedVar.name,
+            sanitized:     taintedVar.sanitized,
+            sanitizerName: taintedVar.sanitizerName,
+            sanitizerWrong,
+            message: sanitizerWrong
+              ? `[TaintGuard] ${sink.description} — '${taintedVar.sanitizerName}'은 이 sink에 적합한 sanitizer가 아닙니다.`
+              : `[TaintGuard] ${sink.description} — '${taintedVar.name}'은 ${taintedVar.sourceDesc}에서 유래한 검증되지 않은 입력입니다.`,
+          });
+        }
+      }
+      break;
     }
   }
 
+  private nameMatches(funcStr: string, pattern: string): boolean {
+    return funcStr === pattern || funcStr.endsWith('.' + pattern);
+  }
+  
+  
+
   private findTaintedInExpr(node: any): TaintedVar | null {
     if (!node) return null;
+    const direct = this.matchSource(node);
+    if (direct) {
+      return {
+        name: direct, sourceDesc: direct, sourceLine: node.lineno ?? 0,
+        sanitized: false, validForCategories: [],
+      };
+    }
     if (node._type === 'Name' && this.tainted.has(node.id))
       return this.tainted.get(node.id)!;
     if (node._type === 'JoinedStr') {
@@ -271,7 +301,11 @@ export class PythonTaintEngine {
       return this.tainted.get(arg.id)!;
     return this.findTaintedInExpr(arg);
   }
-
+  private strArg(node: any, index: number): string {
+    const arg = node.args?.[index];
+    if (arg?._type === 'Constant' && typeof arg.value === 'string') return arg.value;
+    return '?';
+  }
   private extractName(node: any): string | null {
     if (node._type === 'Name') return node.id;
     return null;

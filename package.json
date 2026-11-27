@@ -4,8 +4,12 @@
   "displayName": "SCSP - Web Vulnerability Detector",
   "description": "Taint Analysis 기반 웹 취약점 실시간 탐지",
   "version": "0.1.0",
-  "engines": { "vscode": "^1.85.0" },
-  "categories": ["Linters"],
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "Linters"
+  ],
   "activationEvents": [
     "onLanguage:javascript",
     "onLanguage:typescript",
@@ -20,28 +24,39 @@
       "properties": {
         "taintGuard.enabledRules": {
           "type": "array",
-          "default": ["sqli", "xss", "cmdi", "path", "ssrf", "redirect"],
+          "default": [
+            "sqli",
+            "xss",
+            "cmdi",
+            "path",
+            "ssrf",
+            "redirect"
+          ],
           "description": "활성화할 취약점 탐지 규칙"
         },
         "taintGuard.severity": {
           "type": "string",
-          "enum": ["error", "warning", "information"],
-          "default": "warning"
+          "enum": [
+            "error",
+            "warning",
+            "information"
+          ],
+          "default": "error"
         }
       }
     }
   },
   "scripts": {
     "compile": "tsc -p ./",
-    "watch": "tsc -watch -p ./"
+    "watch": "tsc -watch -p ./",
+    "test": "tsc -p ./ && node --test out/test/*.test.js"
   },
   "dependencies": {
-    "@typescript-eslint/typescript-estree": "^7.0.0",
-    "python-ast": "^0.1.0"
+    "@typescript-eslint/typescript-estree": "^7.0.0"
   },
   "devDependencies": {
-    "@types/vscode": "^1.85.0",
     "@types/node": "^20.0.0",
+    "@types/vscode": "^1.85.0",
     "typescript": "^5.3.0"
   }
 }
