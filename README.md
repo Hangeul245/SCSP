@@ -47,7 +47,7 @@ VSCode에서 `F5` → Extension Development Host 실행
 1. JS/TS/Python 파일 열기
 2. 코드 수정 후 600ms 뒤 자동 분석
 3. `Ctrl+Shift+M` Problems 패널에서 결과 확인
-4. 경고 클릭 시 오염 source 위치로 이동
+4. 결과(오류·경고)를 클릭하면 취약한 줄(sink)로, 그 아래 "오염 source" 항목을 클릭하면 입력이 들어온 줄로 이동
 
 ---
 
