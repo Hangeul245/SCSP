@@ -33,7 +33,8 @@
   },
   "scripts": {
     "compile": "tsc -p ./",
-    "watch": "tsc -watch -p ./"
+    "watch": "tsc -watch -p ./",
+    "test": "tsc -p ./ && node --test out/test/*.test.js"
   },
   "dependencies": {
     "@typescript-eslint/typescript-estree": "^7.0.0",

@@ -1,22 +1,24 @@
-import * as parser from 'python-ast';
+import { parsePython } from './pythonparser';
 import type { TaintedVar, TaintFlow, SinkCategory } from './types';
 
 export class PythonTaintEngine {
   private tainted = new Map<string, TaintedVar>();
   private flows: TaintFlow[] = [];
 
+    lastError: { reason: string; line?: number } | null = null;
+
   analyze(code: string): TaintFlow[] {
     this.tainted.clear();
     this.flows = [];
+    this.lastError = null;
 
-    let ast: any;
-    try {
-      ast = parser.parse(code);
-    } catch {
+    const parsed = parsePython(code);
+    if (!parsed.ok) {
+      this.lastError = { reason: parsed.reason, line: parsed.line };
       return [];
     }
 
-    this.visitBody(ast.body);
+    this.visitBody(parsed.ast.body);
     return this.flows;
   }
 
@@ -73,6 +75,7 @@ export class PythonTaintEngine {
   }
 
   private handleAssign(node: any) {
+    this.checkSinks(node.value);
     for (const target of (node.targets ?? [])) {
       const varName = this.extractName(target);
       if (varName) this.processAssignment(varName, node.value, node.lineno);
@@ -80,6 +83,7 @@ export class PythonTaintEngine {
   }
 
   private handleAnnAssign(node: any) {
+    this.checkSinks(node.value);
     const varName = this.extractName(node.target);
     if (varName) this.processAssignment(varName, node.value, node.lineno);
   }
@@ -143,13 +147,13 @@ export class PythonTaintEngine {
         objName.startsWith('request.values') ||
         objName.startsWith('request.cookies')
       ) {
-        const key = node.args?.[0]?._type === 'Str' ? node.args[0].s : '?';
+        const key = this.strArg(node, 0);
         return `${objName}.get('${key}')`;
       }
     }
 
     if (func._type === 'Attribute' && func.attr === 'get_argument') {
-      const key = node.args?.[0]?._type === 'Str' ? node.args[0].s : '?';
+      const key = this.strArg(node, 0);
       return `get_argument('${key}')`;
     }
 
@@ -206,33 +210,40 @@ export class PythonTaintEngine {
     ];
 
     for (const sink of sinks) {
-      if (!funcStr.endsWith(sink.pattern) && funcStr !== sink.pattern) continue;
+      if (!this.nameMatches(funcStr, sink.pattern)) continue;
 
       const taintedVar = this.findTaintedArgAtIndex(node, sink.argIndex);
-      if (!taintedVar) continue;
+      if (taintedVar) {
+        const sanitizerWrong =
+          taintedVar.sanitized &&
+          !taintedVar.validForCategories.includes(sink.category);
 
-      const sanitizerWrong =
-        taintedVar.sanitized &&
-        !taintedVar.validForCategories.includes(sink.category);
-
-      if (taintedVar.sanitized && !sanitizerWrong) continue;
-
-      this.flows.push({
-        vulnType:      sink.category,
-        sourceLine:    taintedVar.sourceLine,
-        sourceDesc:    taintedVar.sourceDesc,
-        sinkLine:      node.lineno ?? 0,
-        sinkDesc:      sink.description,
-        sinkArgSource: taintedVar.name,
-        sanitized:     taintedVar.sanitized,
-        sanitizerName: taintedVar.sanitizerName,
-        sanitizerWrong,
-        message: sanitizerWrong
-          ? `[TaintGuard] ${sink.description} — '${taintedVar.sanitizerName}'은 이 sink에 적합한 sanitizer가 아닙니다.`
-          : `[TaintGuard] ${sink.description} — '${taintedVar.name}'은 ${taintedVar.sourceDesc}에서 유래한 검증되지 않은 입력입니다.`,
-      });
+        if (!taintedVar.sanitized || sanitizerWrong) {
+          this.flows.push({
+            vulnType:      sink.category,
+            sourceLine:    taintedVar.sourceLine,
+            sourceDesc:    taintedVar.sourceDesc,
+            sinkLine:      node.lineno ?? 0,
+            sinkDesc:      sink.description,
+            sinkArgSource: taintedVar.name,
+            sanitized:     taintedVar.sanitized,
+            sanitizerName: taintedVar.sanitizerName,
+            sanitizerWrong,
+            message: sanitizerWrong
+              ? `[TaintGuard] ${sink.description} — '${taintedVar.sanitizerName}'은 이 sink에 적합한 sanitizer가 아닙니다.`
+              : `[TaintGuard] ${sink.description} — '${taintedVar.name}'은 ${taintedVar.sourceDesc}에서 유래한 검증되지 않은 입력입니다.`,
+          });
+        }
+      }
+      break;
     }
   }
+
+  private nameMatches(funcStr: string, pattern: string): boolean {
+    return funcStr === pattern || funcStr.endsWith('.' + pattern);
+  }
+  
+  
 
   private findTaintedInExpr(node: any): TaintedVar | null {
     if (!node) return null;
@@ -271,7 +282,11 @@ export class PythonTaintEngine {
       return this.tainted.get(arg.id)!;
     return this.findTaintedInExpr(arg);
   }
-
+  private strArg(node: any, index: number): string {
+    const arg = node.args?.[index];
+    if (arg?._type === 'Constant' && typeof arg.value === 'string') return arg.value;
+    return '?';
+  }
   private extractName(node: any): string | null {
     if (node._type === 'Name') return node.id;
     return null;
