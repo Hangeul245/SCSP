@@ -51,9 +51,14 @@ export class PythonTaintEngine {
       case 'Expr':
         this.visitExpr(node.value);
         break;
-      case 'If':
       case 'For':
       case 'AsyncFor':
+        this.visitExpr(node.iter);
+        this.assignTarget(node.target, node.iter, node.lineno);
+        this.visitBody(node.body);
+        this.visitBody(node.orelse);
+        break;
+      case 'If':
       case 'While':
         this.visitBody(node.body);
         this.visitBody(node.orelse);
@@ -91,15 +96,22 @@ export class PythonTaintEngine {
   private handleAssign(node: any) {
     this.visitExpr(node.value);
     for (const target of (node.targets ?? [])) {
-      const varName = this.extractName(target);
-      if (varName) this.processAssignment(varName, node.value, node.lineno);
+      this.assignTarget(target, node.value, node.lineno);
     }
   }
 
   private handleAnnAssign(node: any) {
     this.visitExpr(node.value);
-    const varName = this.extractName(node.target);
-    if (varName) this.processAssignment(varName, node.value, node.lineno);
+    this.assignTarget(node.target, node.value, node.lineno);
+  }
+
+  private assignTarget(target: any, value: any, line: number) {
+    if (target?._type === 'Tuple' || target?._type === 'List') {
+      for (const elt of (target.elts ?? [])) this.assignTarget(elt, value, line);
+      return;
+    }
+    const varName = this.extractName(target);
+    if (varName) this.processAssignment(varName, value, line);
   }
 
   private processAssignment(varName: string, value: any, line: number) {
@@ -160,6 +172,18 @@ export class PythonTaintEngine {
       const cli = this.matchCliSource(node);
       if (cli) return cli;
     }
+    if (this.profiles.has('file')) {
+      const file = this.matchFileSource(node);
+      if (file) return file;
+    }
+    if (this.profiles.has('network')) {
+      const net = this.matchNetworkSource(node);
+      if (net) return net;
+    }
+    if (this.profiles.has('llm')) {
+      const llm = this.matchLlmSource(node);
+      if (llm) return llm;
+    }
     return null;
   }
 
@@ -206,6 +230,46 @@ export class PythonTaintEngine {
     return null;
   }
 
+  private matchFileSource(node: any): string | null {
+    if (node._type !== 'Call') return null;
+    const func = node.func;
+    const name = func._type === 'Attribute' ? func.attr : func._type === 'Name' ? func.id : '';
+    const chain = this.extractAttrChain(func);
+
+    if (['read', 'readline', 'readlines', 'read_text', 'read_bytes'].includes(name)) {
+      return `.${name}() (파일 내용)`;
+    }
+    if (chain === 'json.load' || chain === 'pickle.load') {
+      return `${chain}() (파일 내용)`;
+    }
+    if (['namelist', 'infolist', 'getnames', 'getmembers'].includes(name)) {
+      return `.${name}() (압축 파일 안 이름)`;
+    }
+    if (['os.listdir', 'os.scandir', 'os.walk', 'glob.glob'].includes(chain) ||
+        ['iterdir', 'glob', 'rglob'].includes(name)) {
+      return `${chain || name}() (폴더 안 파일 이름)`;
+    }
+    return null;
+  }
+
+  private matchNetworkSource(node: any): string | null {
+    if (node._type !== 'Call') return null;
+    const chain = this.extractAttrChain(node.func);
+    const calls = [
+      'requests.get', 'requests.post', 'requests.put', 'requests.request',
+      'httpx.get', 'httpx.post', 'urllib.request.urlopen',
+    ];
+    return calls.includes(chain) ? `${chain}() (HTTP 응답)` : null;
+  }
+
+  private matchLlmSource(node: any): string | null {
+    if (node._type !== 'Call') return null;
+    const chain = this.extractAttrChain(node.func);
+    const calls = ['ollama.chat', 'ollama.generate', 'chat.completions.create', 'messages.create'];
+    const hit = calls.find(c => chain === c || chain.endsWith('.' + c));
+    return hit ? `${chain}() (LLM 응답)` : null;
+  }
+
   private subscriptKey(node: any): string {
     const s = node.slice?._type === 'Index' ? node.slice.value : node.slice;
     return s?._type === 'Constant' && typeof s.value === 'string' ? s.value : '?';
@@ -239,7 +303,7 @@ export class PythonTaintEngine {
     if (node._type !== 'Call') return;
     const funcStr = this.extractAttrChain(node.func);
 
-    const sinks: { pattern: string; argIndex: number; category: SinkCategory; description: string }[] = [
+    const sinks: { pattern: string; argIndex: number | 'any'; category: SinkCategory; description: string }[] = [
       { pattern: 'cursor.execute',         argIndex: 0, category: 'sqli',     description: 'SQL Injection' },
       { pattern: 'execute',                argIndex: 0, category: 'sqli',     description: 'SQL Injection' },
       { pattern: 'raw',                    argIndex: 0, category: 'sqli',     description: 'SQL Injection (Django raw)' },
@@ -251,8 +315,24 @@ export class PythonTaintEngine {
       { pattern: 'subprocess.call',        argIndex: 0, category: 'cmdi',     description: 'Command Injection' },
       { pattern: 'subprocess.Popen',       argIndex: 0, category: 'cmdi',     description: 'Command Injection' },
       { pattern: 'eval',                   argIndex: 0, category: 'cmdi',     description: 'RCE (eval)' },
+      { pattern: 'exec',                   argIndex: 0, category: 'cmdi',     description: 'RCE (exec)' },
+      { pattern: 'pickle.loads',           argIndex: 0, category: 'cmdi',     description: 'RCE (역직렬화)' },
+      { pattern: 'pickle.load',            argIndex: 0, category: 'cmdi',     description: 'RCE (역직렬화)' },
+      { pattern: 'marshal.loads',          argIndex: 0, category: 'cmdi',     description: 'RCE (역직렬화)' },
+      { pattern: 'yaml.load',              argIndex: 0, category: 'cmdi',     description: 'RCE (역직렬화)' },
       { pattern: 'open',                   argIndex: 0, category: 'path',     description: 'Path Traversal' },
       { pattern: 'os.path.join',           argIndex: 0, category: 'path',     description: 'Path Traversal' },
+      { pattern: 'shutil.move',            argIndex: 'any', category: 'path', description: 'Path Traversal (파일 이동)' },
+      { pattern: 'shutil.copy',            argIndex: 'any', category: 'path', description: 'Path Traversal (파일 복사)' },
+      { pattern: 'shutil.copy2',           argIndex: 'any', category: 'path', description: 'Path Traversal (파일 복사)' },
+      { pattern: 'shutil.copyfile',        argIndex: 'any', category: 'path', description: 'Path Traversal (파일 복사)' },
+      { pattern: 'shutil.rmtree',          argIndex: 0, category: 'path',     description: 'Path Traversal (폴더 삭제)' },
+      { pattern: 'os.remove',              argIndex: 0, category: 'path',     description: 'Path Traversal (파일 삭제)' },
+      { pattern: 'os.unlink',              argIndex: 0, category: 'path',     description: 'Path Traversal (파일 삭제)' },
+      { pattern: 'os.rename',              argIndex: 'any', category: 'path', description: 'Path Traversal (이름 변경)' },
+      { pattern: 'os.replace',             argIndex: 'any', category: 'path', description: 'Path Traversal (이름 변경)' },
+      { pattern: 'extract',                argIndex: 'any', category: 'path', description: 'Path Traversal (압축 풀기)' },
+      { pattern: 'extractall',             argIndex: 'any', category: 'path', description: 'Path Traversal (압축 풀기)' },
       { pattern: 'requests.get',           argIndex: 0, category: 'ssrf',     description: 'SSRF' },
       { pattern: 'requests.post',          argIndex: 0, category: 'ssrf',     description: 'SSRF' },
       { pattern: 'urllib.request.urlopen', argIndex: 0, category: 'ssrf',     description: 'SSRF' },
@@ -317,6 +397,12 @@ export class PythonTaintEngine {
       return this.findTaintedInExpr(node.left) ?? this.findTaintedInExpr(node.right);
     if (node._type === 'Attribute' || node._type === 'Subscript')
       return this.findTaintedInExpr(node.value);
+    if (node._type === 'Tuple' || node._type === 'List') {
+      for (const elt of (node.elts ?? [])) {
+        const found = this.findTaintedInExpr(elt);
+        if (found) return found;
+      }
+    }
     if (node._type === 'Call') {
       if (node.func?._type === 'Attribute') {
         const owner = this.findTaintedInExpr(node.func.value);
@@ -337,7 +423,18 @@ export class PythonTaintEngine {
     return null;
   }
 
-  private findTaintedArgAtIndex(node: any, argIndex: number): TaintedVar | null {
+  private findTaintedArgAtIndex(node: any, argIndex: number | 'any'): TaintedVar | null {
+    if (argIndex === 'any') {
+      for (const a of (node.args ?? [])) {
+        const found = this.findTaintedInExpr(a);
+        if (found) return found;
+      }
+      for (const kw of (node.keywords ?? [])) {
+        const found = this.findTaintedInExpr(kw.value);
+        if (found) return found;
+      }
+      return null;
+    }
     const arg = node.args?.[argIndex];
     if (!arg) return null;
     if (arg._type === 'Name' && this.tainted.has(arg.id))
