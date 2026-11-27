@@ -1,8 +1,8 @@
 {
   "name": "scsp",
   "type": "commonjs",
-  "displayName": "SCSP - Web Vulnerability Detector",
-  "description": "Taint Analysis 기반 웹 취약점 실시간 탐지",
+  "displayName": "SCSP - Realtime Taint Detector",
+  "description": "Taint Analysis 기반 실시간 취약점 탐지 (웹, 명령줄, 파일, 네트워크, LLM 입력)",
   "version": "0.1.0",
   "engines": {
     "vscode": "^1.85.0"
